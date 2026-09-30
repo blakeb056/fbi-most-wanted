@@ -10,21 +10,7 @@ import {
   TvChannel,
   GlobeLayerMode,
 } from "@/lib/types";
-import { playScannerBlip, enableAudio } from "@/lib/sound";
-import {
-  Crosshair,
-  MapPin,
-  Eye,
-  RotateCw,
-  PlaneTakeoff,
-  Radio,
-  Tv,
-  AlertOctagon,
-  Flame,
-  Volume2,
-  VolumeX,
-  ExternalLink,
-} from "lucide-react";
+import { SEV_COLOR } from "@/lib/severity";
 
 interface TacticalGlobeProps {
   activeMode: GlobeLayerMode;
@@ -35,11 +21,15 @@ interface TacticalGlobeProps {
   tvChannels?: TvChannel[];
   onSelectFugitive?: (fugitive: Fugitive) => void;
   onSelectDistressCall?: (call: DistressCall) => void;
+  onSelectTracerHotspot?: (hotspot: TracerHotspot) => void;
   onSelectRadioStation?: (station: RadioStation) => void;
   onSelectTvChannel?: (channel: TvChannel) => void;
   selectedFugitive?: Fugitive | null;
   selectedRadioStation?: RadioStation | null;
   selectedTvChannel?: TvChannel | null;
+  autoRotate?: boolean;
+  onToggleOrbit?: () => void;
+  focusPoint?: { lat: number; lng: number; altitude?: number } | null;
 }
 
 const GLOBE_RADIUS = 75;
@@ -63,22 +53,17 @@ export default function TacticalGlobe({
   tvChannels = [],
   onSelectFugitive,
   onSelectDistressCall,
+  onSelectTracerHotspot,
   onSelectRadioStation,
   onSelectTvChannel,
   selectedFugitive,
   selectedRadioStation,
   selectedTvChannel,
+  autoRotate = false, // Default to FALSE so globe NEVER drifts or fights the user
+  onToggleOrbit,
+  focusPoint,
 }: TacticalGlobeProps) {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [autoRotate, setAutoRotate] = useState(true);
-  const [scannerMuted, setScannerMuted] = useState(false);
-
-  // Active target state for bottom HUD cards
-  const [activeFugitive, setActiveFugitive] = useState<Fugitive | null>(selectedFugitive || null);
-  const [activeCall, setActiveCall] = useState<DistressCall | null>(null);
-  const [activeHotspot, setActiveHotspot] = useState<TracerHotspot | null>(null);
-  const [activeStation, setActiveStation] = useState<RadioStation | null>(selectedRadioStation || null);
-  const [activeTv, setActiveTv] = useState<TvChannel | null>(selectedTvChannel || null);
 
   // Hover Tooltip
   const [hoveredInfo, setHoveredInfo] = useState<{
@@ -113,12 +98,12 @@ export default function TacticalGlobe({
   // Refs for callbacks and toggles so listeners never go stale
   const autoRotateRef = useRef(autoRotate);
   autoRotateRef.current = autoRotate;
-  const scannerMutedRef = useRef(scannerMuted);
-  scannerMutedRef.current = scannerMuted;
   const onSelectFugitiveRef = useRef(onSelectFugitive);
   onSelectFugitiveRef.current = onSelectFugitive;
   const onSelectDistressCallRef = useRef(onSelectDistressCall);
   onSelectDistressCallRef.current = onSelectDistressCall;
+  const onSelectTracerHotspotRef = useRef(onSelectTracerHotspot);
+  onSelectTracerHotspotRef.current = onSelectTracerHotspot;
   const onSelectRadioStationRef = useRef(onSelectRadioStation);
   onSelectRadioStationRef.current = onSelectRadioStation;
   const onSelectTvChannelRef = useRef(onSelectTvChannel);
@@ -126,16 +111,20 @@ export default function TacticalGlobe({
 
   // Focus globe camera smoothly on a lat/lng coordinate
   const focusOnCoordinates = useCallback((lat: number, lng: number) => {
-    setAutoRotate(false);
     const targetY = -((lng * Math.PI) / 180) - Math.PI / 2;
     const targetX = ((lat * Math.PI) / 180) * 0.65;
     targetRotationRef.current = { x: targetX, y: targetY };
   }, []);
 
-  // Update target focus when parent selections change
+  // Update target focus when parent selections or focusPoint changes
+  useEffect(() => {
+    if (focusPoint) {
+      focusOnCoordinates(focusPoint.lat, focusPoint.lng);
+    }
+  }, [focusPoint, focusOnCoordinates]);
+
   useEffect(() => {
     if (selectedFugitive) {
-      setActiveFugitive(selectedFugitive);
       const loc = selectedFugitive.crime_location || selectedFugitive.escape_location;
       if (loc) focusOnCoordinates(loc.lat, loc.lng);
     }
@@ -143,14 +132,12 @@ export default function TacticalGlobe({
 
   useEffect(() => {
     if (selectedRadioStation) {
-      setActiveStation(selectedRadioStation);
       focusOnCoordinates(selectedRadioStation.lat, selectedRadioStation.lon);
     }
   }, [selectedRadioStation, focusOnCoordinates]);
 
   useEffect(() => {
     if (selectedTvChannel) {
-      setActiveTv(selectedTvChannel);
       focusOnCoordinates(selectedTvChannel.lat, selectedTvChannel.lon);
     }
   }, [selectedTvChannel, focusOnCoordinates]);
@@ -268,7 +255,7 @@ export default function TacticalGlobe({
     globeGroup.add(tvGroup);
     tvGroupRef.current = tvGroup;
 
-    // Mouse Drag & Raycast Interaction
+    // Mouse Drag & Interaction
     let isDragging = false;
     let previousMousePosition = { x: 0, y: 0 };
 
@@ -312,8 +299,8 @@ export default function TacticalGlobe({
             setHoveredInfo({
               title: u.call.desc,
               subtitle: `${u.call.city}, ${u.call.state} (${u.call.kind.toUpperCase()})`,
-              badge: u.call.sev >= 3 ? "FELONY CALL" : "ACTIVE 911",
-              badgeColor: u.call.sev >= 3 ? "text-red-400 bg-red-500/20 border-red-500/40" : "text-cyan-400 bg-cyan-500/20 border-cyan-500/40",
+              badge: u.call.sev >= 3 ? "VIOLENT FELONY" : `SEV ${u.call.sev} CALL`,
+              badgeColor: u.call.sev >= 3 ? "text-rose-400 bg-rose-500/20 border-rose-500/40" : "text-cyan-400 bg-cyan-500/20 border-cyan-500/40",
               screenX: e.clientX,
               screenY: e.clientY,
             });
@@ -329,8 +316,8 @@ export default function TacticalGlobe({
           } else if (u.mode === "radio") {
             setHoveredInfo({
               title: u.station.name,
-              subtitle: `Country: ${u.station.cc} • Click to stream live`,
-              badge: "RADIO STATION",
+              subtitle: `Nation: ${u.station.cc} • Click to tune in`,
+              badge: "RADIO TRANSMITTER",
               badgeColor: "text-emerald-400 bg-emerald-500/20 border-emerald-500/40",
               screenX: e.clientX,
               screenY: e.clientY,
@@ -339,7 +326,7 @@ export default function TacticalGlobe({
             setHoveredInfo({
               title: u.channel.name,
               subtitle: `Category: ${u.channel.cat} • Click to watch live`,
-              badge: "LIVE TV STREAM",
+              badge: "LIVE BROADCAST",
               badgeColor: "text-purple-400 bg-purple-500/20 border-purple-500/40",
               screenX: e.clientX,
               screenY: e.clientY,
@@ -366,19 +353,14 @@ export default function TacticalGlobe({
             const hit = intersects[0].object as any;
             const u = hit.userData;
             if (u.mode === "fbi") {
-              setActiveFugitive(u.fugitive);
               if (onSelectFugitiveRef.current) onSelectFugitiveRef.current(u.fugitive);
             } else if (u.mode === "distress") {
-              setActiveCall(u.call);
-              if (!scannerMutedRef.current) playScannerBlip(u.call.sev);
               if (onSelectDistressCallRef.current) onSelectDistressCallRef.current(u.call);
             } else if (u.mode === "tracer") {
-              setActiveHotspot(u.hotspot);
+              if (onSelectTracerHotspotRef.current) onSelectTracerHotspotRef.current(u.hotspot);
             } else if (u.mode === "radio") {
-              setActiveStation(u.station);
               if (onSelectRadioStationRef.current) onSelectRadioStationRef.current(u.station);
             } else if (u.mode === "tv") {
-              setActiveTv(u.channel);
               if (onSelectTvChannelRef.current) onSelectTvChannelRef.current(u.channel);
             }
           }
@@ -394,7 +376,7 @@ export default function TacticalGlobe({
 
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      camera.position.z = Math.max(130, Math.min(360, camera.position.z + e.deltaY * 0.2));
+      camera.position.z = Math.max(110, Math.min(380, camera.position.z + e.deltaY * 0.2));
     };
     dom.addEventListener("wheel", onWheel, { passive: false });
 
@@ -427,7 +409,7 @@ export default function TacticalGlobe({
           targetRotationRef.current = null;
         }
       } else if (autoRotateRef.current && !isDragging) {
-        globeGroup.rotation.y += delta * 0.12;
+        globeGroup.rotation.y += delta * 0.08;
       }
 
       // Animate flight drone particles
@@ -496,7 +478,7 @@ export default function TacticalGlobe({
         };
         group.add(crimeMesh);
 
-        // Pulsing ring
+        // Ring
         const ringGeom = new THREE.RingGeometry(2.0, 2.7, 16);
         const ringMat = new THREE.MeshBasicMaterial({
           color: 0xef4444,
@@ -553,21 +535,20 @@ export default function TacticalGlobe({
     if (activeMode === "fbi") interactiveMeshesRef.current = group.children;
   }, [fugitives, activeMode]);
 
-  // Populate Distress Layer
+  // Populate Distress Layer with authentic SEV_COLOR palette
   useEffect(() => {
     const group = distressGroupRef.current;
     if (!group) return;
     group.clear();
 
-    const activeCallsSlice = distressCalls.slice(0, 400);
+    const activeCallsSlice = distressCalls.slice(0, 500);
     activeCallsSlice.forEach((call) => {
       const pos = latLngToVector3(call.lat, call.lon, GLOBE_RADIUS + 0.6);
       const isFelony = call.sev >= 3;
-      const isFire = call.kind === "fire";
-      const color = isFelony ? 0xef4444 : isFire ? 0xf97316 : 0x06b6d4;
+      const hexColor = isFelony ? 0xff1240 : call.sev === 2 ? 0xff5a2d : call.sev === 1 ? 0xffb020 : 0x35d0ff;
 
-      const dotGeom = new THREE.SphereGeometry(isFelony ? 1.5 : 1.1, 8, 8);
-      const dotMat = new THREE.MeshBasicMaterial({ color });
+      const dotGeom = new THREE.SphereGeometry(isFelony ? 1.6 : 1.1, 8, 8);
+      const dotMat = new THREE.MeshBasicMaterial({ color: hexColor });
       const dotMesh = new THREE.Mesh(dotGeom, dotMat);
       dotMesh.position.copy(pos);
       (dotMesh as any).userData = {
@@ -591,9 +572,9 @@ export default function TacticalGlobe({
       const scale = Math.min(1.2 + Math.log10(h.n + 1) * 0.9, 4.2);
       const geom = new THREE.SphereGeometry(scale, 10, 10);
       const mat = new THREE.MeshBasicMaterial({
-        color: h.n > 200 ? 0xdc2626 : 0xea580c,
+        color: h.n > 200 ? 0xff2d4e : 0xe9eff5,
         transparent: true,
-        opacity: 0.85,
+        opacity: 0.88,
       });
       const mesh = new THREE.Mesh(geom, mat);
       mesh.position.copy(pos);
@@ -638,7 +619,7 @@ export default function TacticalGlobe({
     tvChannels.slice(0, 400).forEach((ch) => {
       const pos = latLngToVector3(ch.lat, ch.lon, GLOBE_RADIUS + 0.6);
       const geom = new THREE.BoxGeometry(1.8, 1.2, 1.2);
-      const mat = new THREE.MeshBasicMaterial({ color: 0x8b5cf6 });
+      const mat = new THREE.MeshBasicMaterial({ color: 0xa855f7 });
       const mesh = new THREE.Mesh(geom, mat);
       mesh.position.copy(pos);
       (mesh as any).userData = {
@@ -652,261 +633,11 @@ export default function TacticalGlobe({
   }, [tvChannels, activeMode]);
 
   return (
-    <div className="w-full space-y-4 font-mono">
-      {/* 3D Viewport Container */}
-      <div className="relative w-full h-[560px] md:h-[640px] bg-neutral-950/90 rounded-2xl border border-neutral-800 overflow-hidden shadow-2xl backdrop-blur-md">
-        {/* Top-Left Telemetry & HUD */}
-        <div className="absolute top-4 left-4 z-10 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 bg-neutral-900/90 border border-neutral-700/80 px-3 py-1.5 rounded-lg text-xs text-neutral-300 backdrop-blur">
-            <Crosshair className="w-4 h-4 text-red-500 animate-spin" />
-            <span className="font-semibold text-white tracking-widest uppercase">
-              {activeMode === "fbi" && "FBI Wanted Radar"}
-              {activeMode === "distress" && "Distress 911 CAD Dispatch"}
-              {activeMode === "tracer" && "Tracer Conflict War Map"}
-              {activeMode === "radio" && "Sky Dial World Radio Tuner"}
-              {activeMode === "tv" && "Sky Dial TV Livestreams"}
-            </span>
-          </div>
+    <div className="relative w-full h-full min-h-[580px] lg:min-h-[720px] bg-neutral-950 overflow-hidden font-mono select-none">
+      {/* Three.js Canvas Mount */}
+      <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
 
-          <button
-            onClick={() => {
-              targetRotationRef.current = null;
-              setAutoRotate((prev) => !prev);
-            }}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-all ${
-              autoRotate
-                ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-                : "bg-neutral-800/80 border-neutral-700 text-neutral-400"
-            }`}
-          >
-            <RotateCw className={`w-3.5 h-3.5 ${autoRotate ? "animate-spin" : ""}`} />
-            {autoRotate ? "Orbiting" : "Paused"}
-          </button>
-
-          {activeMode === "distress" && (
-            <button
-              onClick={async () => {
-                await enableAudio();
-                setScannerMuted((prev) => !prev);
-              }}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs border transition-all ${
-                !scannerMuted
-                  ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                  : "bg-neutral-800/80 border-neutral-700 text-neutral-400"
-              }`}
-            >
-              {!scannerMuted ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
-              {!scannerMuted ? "Scanner Sound ON" : "Muted"}
-            </button>
-          )}
-        </div>
-
-        {/* Top-Right Mode Legend */}
-        <div className="absolute top-4 right-4 z-10 hidden sm:flex flex-col gap-1.5 bg-neutral-900/90 border border-neutral-800 p-2.5 rounded-xl text-[11px] text-neutral-300 backdrop-blur shadow-lg">
-          {activeMode === "fbi" && (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]" />
-                <span>Crime Origin Beacon</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shadow-[0_0_8px_#f59e0b]" />
-                <span>Suspected Haven Beacon</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-4 h-0.5 bg-amber-400/80 rounded" />
-                <span>3D Flight Trajectory Arc</span>
-              </div>
-            </>
-          )}
-          {activeMode === "distress" && (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444]" />
-                <span>Violent Felony / Priority</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-[0_0_8px_#f97316]" />
-                <span>Structure Fire / Rescue</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
-                <span>Routine Police / Traffic</span>
-              </div>
-            </>
-          )}
-          {activeMode === "tracer" && (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-600 shadow-[0_0_8px_#dc2626]" />
-                <span>Active War / High Casualties</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
-                <span>Armed Clashes / Cartel Strikes</span>
-              </div>
-            </>
-          )}
-          {activeMode === "radio" && (
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />
-              <span>Live Streaming Radio Station</span>
-            </div>
-          )}
-          {activeMode === "tv" && (
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-purple-500 shadow-[0_0_8px_#8b5cf6]" />
-              <span>Live Public TV / Webcam Feed</span>
-            </div>
-          )}
-        </div>
-
-        {/* Three.js Canvas Mount */}
-        <div ref={mountRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
-
-        {/* Bottom Context HUD Cards */}
-        {/* FBI Target Locked Banner */}
-        {activeMode === "fbi" && activeFugitive && (
-          <div className="absolute bottom-4 left-4 right-4 z-20 bg-neutral-900/95 border border-red-500/50 p-4 rounded-xl shadow-2xl backdrop-blur flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <img
-                src={activeFugitive.images[0]?.thumb || activeFugitive.images[0]?.large}
-                alt={activeFugitive.title}
-                className="w-12 h-12 rounded-lg object-cover border border-neutral-700 shrink-0"
-              />
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">
-                    TARGET LOCKED
-                  </span>
-                  <span className="text-xs text-amber-400 font-bold">
-                    {activeFugitive.reward_formatted}
-                  </span>
-                </div>
-                <h4 className="text-sm font-bold text-white line-clamp-1 mt-0.5">
-                  {activeFugitive.title}
-                </h4>
-                <div className="flex flex-wrap items-center gap-3 text-[11px] text-neutral-400 mt-1">
-                  {activeFugitive.crime_location && (
-                    <span className="flex items-center gap-1 text-red-400">
-                      <MapPin className="w-3 h-3" /> Crime: {activeFugitive.crime_location.name}
-                    </span>
-                  )}
-                  {activeFugitive.escape_location && (
-                    <span className="flex items-center gap-1 text-amber-400">
-                      <PlaneTakeoff className="w-3 h-3" /> Haven: {activeFugitive.escape_location.name}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-            {onSelectFugitive && (
-              <button
-                onClick={() => onSelectFugitive(activeFugitive)}
-                className="bg-red-600 hover:bg-red-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-lg whitespace-nowrap flex items-center gap-1.5"
-              >
-                <Eye className="w-3.5 h-3.5" /> Open Classified Dossier
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Distress CAD Call Banner */}
-        {activeMode === "distress" && activeCall && (
-          <div className="absolute bottom-4 left-4 right-4 z-20 bg-neutral-900/95 border border-cyan-500/50 p-4 rounded-xl shadow-2xl backdrop-blur flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span
-                  className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${
-                    activeCall.sev >= 3
-                      ? "bg-red-500/20 text-red-400 border-red-500/40"
-                      : "bg-cyan-500/20 text-cyan-400 border-cyan-500/40"
-                  }`}
-                >
-                  {activeCall.kind.toUpperCase()} DISPATCH
-                </span>
-                <span className="text-xs text-neutral-400">{new Date(activeCall.ts).toLocaleTimeString()}</span>
-              </div>
-              <h4 className="text-sm font-bold text-white mt-1">{activeCall.desc}</h4>
-              <p className="text-xs text-neutral-400 mt-0.5">
-                Location: {activeCall.city}, {activeCall.state}
-              </p>
-            </div>
-            <button
-              onClick={() => playScannerBlip(activeCall.sev)}
-              className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-lg whitespace-nowrap flex items-center gap-1.5"
-            >
-              <Volume2 className="w-3.5 h-3.5" /> Replay Scanner Audio
-            </button>
-          </div>
-        )}
-
-        {/* Radio Station Player Bar */}
-        {activeMode === "radio" && activeStation && (
-          <div className="absolute bottom-4 left-4 right-4 z-20 bg-neutral-900/95 border border-emerald-500/50 p-4 rounded-xl shadow-2xl backdrop-blur flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
-                <Radio className="w-5 h-5 animate-pulse" />
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest block">
-                  NOW TUNED IN ({activeStation.cc})
-                </span>
-                <h4 className="text-sm font-bold text-white line-clamp-1">{activeStation.name}</h4>
-              </div>
-            </div>
-            <audio src={activeStation.url} controls autoPlay className="max-w-xs h-8" />
-          </div>
-        )}
-
-        {/* TV Channel Player Modal */}
-        {activeMode === "tv" && activeTv && (
-          <div className="absolute bottom-4 left-4 right-4 z-20 bg-neutral-900/95 border border-purple-500/50 p-4 rounded-xl shadow-2xl backdrop-blur flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400 shrink-0">
-                <Tv className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest block">
-                  LIVE BROADCAST ({activeTv.cat.toUpperCase()})
-                </span>
-                <h4 className="text-sm font-bold text-white line-clamp-1">{activeTv.name}</h4>
-              </div>
-            </div>
-            <a
-              href={activeTv.url}
-              target="_blank"
-              rel="noreferrer"
-              className="bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-lg whitespace-nowrap flex items-center gap-1.5"
-            >
-              <ExternalLink className="w-3.5 h-3.5" /> Watch Live Stream
-            </a>
-          </div>
-        )}
-
-        {/* Tracer Conflict Card */}
-        {activeMode === "tracer" && activeHotspot && (
-          <div className="absolute bottom-4 left-4 right-4 z-20 bg-neutral-900/95 border border-red-500/50 p-4 rounded-xl shadow-2xl backdrop-blur flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest block">
-                UCDP CONFLICT HOTSPOT
-              </span>
-              <h4 className="text-sm font-bold text-white mt-1">
-                {activeHotspot.e} Armed Combat Events Recorded
-              </h4>
-              <p className="text-xs text-neutral-400 mt-0.5">
-                Coordinates: {activeHotspot.la}° N, {activeHotspot.lo}° E
-              </p>
-            </div>
-            <div className="text-right">
-              <span className="text-[10px] text-neutral-400 block uppercase">Recorded Casualties</span>
-              <span className="text-2xl font-black text-rose-500">{activeHotspot.n.toLocaleString()}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Hover Floating Tooltip */}
+      {/* Floating Tooltip */}
       {hoveredInfo && (
         <div
           className="fixed pointer-events-none z-50 bg-neutral-900/95 border border-neutral-700 p-3 rounded-xl shadow-2xl backdrop-blur-md max-w-xs text-xs transform -translate-x-1/2 -translate-y-full mb-3"

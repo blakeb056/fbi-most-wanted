@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Fugitive,
   DistressCall,
@@ -11,40 +11,45 @@ import {
   GlobeLayerMode,
 } from "@/lib/types";
 import TacticalGlobe from "@/components/TacticalGlobe";
+import FbiHUD from "@/components/FbiHUD";
+import DistressHUD from "@/components/DistressHUD";
+import TracerHUD from "@/components/TracerHUD";
+import SkyDialHUD from "@/components/SkyDialHUD";
 import BountyBoard from "@/components/BountyBoard";
 import BountyGame from "@/components/BountyGame";
 import FieldRadar from "@/components/FieldRadar";
 import FugitiveDossier from "@/components/FugitiveDossier";
-import DistressCADFeed from "@/components/DistressCADFeed";
-import TracerConflicts from "@/components/TracerConflicts";
-import RadioDirectory from "@/components/RadioDirectory";
-import TvGuide from "@/components/TvGuide";
+import { enableAudio } from "@/lib/sound";
 import {
-  Globe,
-  Grid,
-  Gamepad2,
+  Shield,
+  ShieldAlert,
+  Flame,
   Radio,
   Tv,
-  Flame,
-  ShieldAlert,
-  Shield,
-  RefreshCw,
-  Info,
-  ChevronRight,
-  MapPin,
-  Volume2,
 } from "lucide-react";
 
 export default function Home() {
   // Master Layer Mode
   const [layerMode, setLayerMode] = useState<GlobeLayerMode>("fbi");
 
-  // Sub-tabs per mode
-  const [fbiTab, setFbiTab] = useState<"globe" | "board" | "game" | "radar">("globe");
-  const [distressTab, setDistressTab] = useState<"globe" | "feed">("globe");
-  const [tracerTab, setTracerTab] = useState<"globe" | "conflicts">("globe");
-  const [radioTab, setRadioTab] = useState<"globe" | "directory">("globe");
-  const [tvTab, setTvTab] = useState<"globe" | "guide">("globe");
+  // FBI sub-tab state
+  const [fbiSubTab, setFbiSubTab] = useState<"globe" | "board" | "game" | "radar">("globe");
+
+  // Camera Orbit state (Default FALSE across all modes so globe stays completely stationary)
+  const [autoRotate, setAutoRotate] = useState(false);
+
+  // Camera focus coordinate target
+  const [focusPoint, setFocusPoint] = useState<{ lat: number; lng: number; altitude?: number } | null>(null);
+
+  // Sound toggle (WebAudio scanner blips)
+  const [soundOn, setSoundOn] = useState(false);
+
+  // Distress filters
+  const [sevFilter, setSevFilter] = useState<number[]>([0, 1, 2, 3]);
+  const [kindFilter, setKindFilter] = useState<string[]>(["police", "crime", "fire", "traffic"]);
+
+  // Tracer band filter
+  const [tracerBand, setTracerBand] = useState<string>("all");
 
   // Datasets
   const [fugitives, setFugitives] = useState<Fugitive[]>([]);
@@ -56,29 +61,25 @@ export default function Home() {
 
   // Selection states
   const [selectedFugitive, setSelectedFugitive] = useState<Fugitive | null>(null);
+  const [dossierFugitive, setDossierFugitive] = useState<Fugitive | null>(null);
   const [selectedDistressCall, setSelectedDistressCall] = useState<DistressCall | null>(null);
+  const [selectedTracerHotspot, setSelectedTracerHotspot] = useState<TracerHotspot | null>(null);
   const [selectedRadioStation, setSelectedRadioStation] = useState<RadioStation | null>(null);
   const [selectedTvChannel, setSelectedTvChannel] = useState<TvChannel | null>(null);
 
-  // Loading flags
-  const [loadingFbi, setLoadingFbi] = useState(true);
-  const [loadingDistress, setLoadingDistress] = useState(false);
-  const [loadingTracer, setLoadingTracer] = useState(false);
-  const [loadingRadio, setLoadingRadio] = useState(false);
-  const [loadingTv, setLoadingTv] = useState(false);
+  // Dataset modal for FBI explanation
   const [showFbiDatasetModal, setShowFbiDatasetModal] = useState(false);
 
   // 1. Initial Load: FBI Wanted Feed
   useEffect(() => {
     async function loadFbi() {
       try {
-        setLoadingFbi(true);
         const res = await fetch("/api/wanted?pageSize=50");
         const data = await res.json();
         const initialItems: Fugitive[] = data.items || [];
         setFugitives(initialItems);
 
-        // Background prefetch pages 2 and 3 to expand bounty pool
+        // Background prefetch pages 2 and 3
         fetch("/api/wanted?page=2&pageSize=50")
           .then((r) => r.json())
           .then((p2) => {
@@ -93,18 +94,14 @@ export default function Home() {
           .catch(() => {});
       } catch (err) {
         console.error("Failed to load FBI data:", err);
-      } finally {
-        setLoadingFbi(false);
       }
     }
     loadFbi();
   }, []);
 
-  // 2. Pre-fetch / lazy-load datasets when layers are selected
+  // 2. Pre-fetch / lazy-load Distress CAD calls
   useEffect(() => {
-    // Distress
-    if ((layerMode === "distress" || distressCalls.length === 0) && !loadingDistress) {
-      setLoadingDistress(true);
+    if (layerMode === "distress" || distressCalls.length === 0) {
       fetch("/api/distress")
         .then((r) => r.json())
         .then((data) => {
@@ -112,15 +109,13 @@ export default function Home() {
             setDistressCalls(data.calls);
           }
         })
-        .catch((err) => console.error("Distress fetch error:", err))
-        .finally(() => setLoadingDistress(false));
+        .catch((err) => console.error("Distress fetch error:", err));
     }
-  }, [layerMode]);
+  }, [layerMode, distressCalls.length]);
 
+  // 3. Pre-fetch / lazy-load Tracer UCDP Conflict data
   useEffect(() => {
-    // Tracer
-    if (layerMode === "tracer" && tracerHotspots.length === 0 && !loadingTracer) {
-      setLoadingTracer(true);
+    if (layerMode === "tracer" || tracerHotspots.length === 0) {
       Promise.all([
         fetch("/data/tracer-hotspots.json").then((r) => r.json()),
         fetch("/data/tracer-conflicts.json").then((r) => r.json()),
@@ -129,15 +124,13 @@ export default function Home() {
           if (hotspotData?.hotspots) setTracerHotspots(hotspotData.hotspots);
           if (conflictData?.conflicts) setTracerConflicts(conflictData.conflicts);
         })
-        .catch((err) => console.error("Tracer data load error:", err))
-        .finally(() => setLoadingTracer(false));
+        .catch((err) => console.error("Tracer data load error:", err));
     }
   }, [layerMode, tracerHotspots.length]);
 
+  // 4. Pre-fetch / lazy-load Sky Dial Radio stations
   useEffect(() => {
-    // Radio
-    if (layerMode === "radio" && radioStations.length === 0 && !loadingRadio) {
-      setLoadingRadio(true);
+    if (layerMode === "radio" || radioStations.length === 0) {
       fetch("/data/skydial-radio.json")
         .then((r) => r.json())
         .then((rows: any[]) => {
@@ -154,15 +147,13 @@ export default function Home() {
             setRadioStations(mapped);
           }
         })
-        .catch((err) => console.error("Radio data load error:", err))
-        .finally(() => setLoadingRadio(false));
+        .catch((err) => console.error("Radio data load error:", err));
     }
   }, [layerMode, radioStations.length]);
 
+  // 5. Pre-fetch / lazy-load Sky Dial TV & CCTV channels
   useEffect(() => {
-    // TV
-    if (layerMode === "tv" && tvChannels.length === 0 && !loadingTv) {
-      setLoadingTv(true);
+    if (layerMode === "tv" || tvChannels.length === 0) {
       fetch("/data/skydial-tv.json")
         .then((r) => r.json())
         .then((rows: any[]) => {
@@ -179,12 +170,11 @@ export default function Home() {
             setTvChannels(mapped);
           }
         })
-        .catch((err) => console.error("TV data load error:", err))
-        .finally(() => setLoadingTv(false));
+        .catch((err) => console.error("TV data load error:", err));
     }
   }, [layerMode, tvChannels.length]);
 
-  // Telemetry metric computations
+  // Telemetry computations
   const totalBountyValue = React.useMemo(() => {
     return fugitives.reduce((acc, f) => acc + f.reward_amount, 0);
   }, [fugitives]);
@@ -193,585 +183,335 @@ export default function Home() {
     return fugitives.filter((f) => f.poster_classification === "ten").length;
   }, [fugitives]);
 
-  const totalConflictsFatalities = React.useMemo(() => {
-    return tracerConflicts.reduce((acc, c) => acc + (c.deaths || 0), 0);
-  }, [tracerConflicts]);
+  // Sound toggle handler
+  const handleToggleSound = async () => {
+    if (!soundOn) {
+      await enableAudio();
+      setSoundOn(true);
+    } else {
+      setSoundOn(false);
+    }
+  };
 
-  const handleLocateFugitive = (fugitive: Fugitive) => {
-    setSelectedFugitive(fugitive);
+  // Camera region preset jump
+  const handleFocusRegion = (region: "US" | "UK" | "World") => {
+    setAutoRotate(false);
+    if (region === "US") {
+      setFocusPoint({ lat: 39.5, lng: -96 });
+    } else if (region === "UK") {
+      setFocusPoint({ lat: 53.2, lng: -2.4 });
+    } else {
+      setFocusPoint({ lat: 20, lng: 0 });
+    }
+  };
+
+  // Selection handlers
+  const handleLocateFugitive = (f: Fugitive) => {
+    setSelectedFugitive(f);
     setLayerMode("fbi");
-    setFbiTab("globe");
+    setFbiSubTab("globe");
+    const loc = f.crime_location || f.escape_location;
+    if (loc) setFocusPoint({ lat: loc.lat, lng: loc.lng });
   };
 
-  const handleLocateCall = (call: DistressCall) => {
-    setSelectedDistressCall(call);
-    setLayerMode("distress");
-    setDistressTab("globe");
+  const handleLocateCall = (c: DistressCall) => {
+    setSelectedDistressCall(c);
+    setFocusPoint({ lat: c.lat, lng: c.lon });
   };
 
-  const handleLocateStation = (station: RadioStation) => {
-    setSelectedRadioStation(station);
-    setLayerMode("radio");
-    setRadioTab("globe");
+  const handleLocateStation = (s: RadioStation) => {
+    setSelectedRadioStation(s);
+    setFocusPoint({ lat: s.lat, lng: s.lon });
   };
 
-  const handleLocateChannel = (channel: TvChannel) => {
-    setSelectedTvChannel(channel);
-    setLayerMode("tv");
-    setTvTab("globe");
+  const handleLocateChannel = (ch: TvChannel) => {
+    setSelectedTvChannel(ch);
+    setFocusPoint({ lat: ch.lat, lng: ch.lon });
   };
 
   return (
-    <div className="min-h-screen bg-[#07080a] text-neutral-100 font-mono flex flex-col selection:bg-red-500 selection:text-white">
-      {/* Top Banner Navigation Header */}
-      <header className="border-b border-neutral-800 bg-neutral-950/85 backdrop-blur sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          {/* Logo & Platform Name */}
-          <div className="flex items-center gap-3">
-            <div
-              className={`w-10 h-10 rounded-xl flex items-center justify-center text-white transition-all shadow-lg ${
-                layerMode === "fbi"
-                  ? "bg-red-600 shadow-red-600/40"
-                  : layerMode === "distress"
-                  ? "bg-cyan-600 shadow-cyan-600/40"
-                  : layerMode === "tracer"
-                  ? "bg-rose-600 shadow-rose-600/40"
-                  : layerMode === "radio"
-                  ? "bg-emerald-600 shadow-emerald-600/40"
-                  : "bg-purple-600 shadow-purple-600/40"
-              }`}
-            >
-              {layerMode === "fbi" && <Shield className="w-5 h-5" />}
-              {layerMode === "distress" && <ShieldAlert className="w-5 h-5" />}
-              {layerMode === "tracer" && <Flame className="w-5 h-5" />}
-              {layerMode === "radio" && <Radio className="w-5 h-5" />}
-              {layerMode === "tv" && <Tv className="w-5 h-5" />}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300 border border-neutral-700">
-                  OMNI-GLOBE PLATFORM
-                </span>
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[10px] text-neutral-400">REAL-TIME FEEDS</span>
-              </div>
-              <h1 className="text-base md:text-lg font-black text-white tracking-wider uppercase">
-                Global Surveillance & Broadcast Matrix
-              </h1>
-            </div>
+    <div className="relative w-screen h-screen overflow-hidden bg-[#07080a] text-neutral-100 font-mono select-none flex flex-col">
+      {/* MASTER TOP NAVIGATION BAR */}
+      <header className="h-14 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-md px-4 flex items-center justify-between z-40 shrink-0">
+        {/* Left: Platform Title */}
+        <div className="flex items-center gap-3">
+          <div
+            className={`w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all shadow-md ${
+              layerMode === "fbi"
+                ? "bg-red-600 shadow-red-600/40"
+                : layerMode === "distress"
+                ? "bg-cyan-600 shadow-cyan-600/40"
+                : layerMode === "tracer"
+                ? "bg-rose-600 shadow-rose-600/40"
+                : layerMode === "radio"
+                ? "bg-emerald-600 shadow-emerald-600/40"
+                : "bg-purple-600 shadow-purple-600/40"
+            }`}
+          >
+            {layerMode === "fbi" && <Shield className="w-4 h-4" />}
+            {layerMode === "distress" && <ShieldAlert className="w-4 h-4" />}
+            {layerMode === "tracer" && <Flame className="w-4 h-4" />}
+            {layerMode === "radio" && <Radio className="w-4 h-4" />}
+            {layerMode === "tv" && <Tv className="w-4 h-4" />}
           </div>
 
-          {/* Master Layer Mode Pill Switcher */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0">
-            <button
-              onClick={() => setLayerMode("fbi")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border ${
-                layerMode === "fbi"
-                  ? "bg-red-600 text-white border-red-500 shadow-lg shadow-red-600/30"
-                  : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white"
-              }`}
-            >
-              <Shield className="w-3.5 h-3.5" />
-              <span>FBI Wanted</span>
-            </button>
-
-            <button
-              onClick={() => setLayerMode("distress")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border ${
-                layerMode === "distress"
-                  ? "bg-cyan-600 text-white border-cyan-500 shadow-lg shadow-cyan-600/30"
-                  : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white"
-              }`}
-            >
-              <ShieldAlert className="w-3.5 h-3.5" />
-              <span>Distress 911</span>
-            </button>
-
-            <button
-              onClick={() => setLayerMode("tracer")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border ${
-                layerMode === "tracer"
-                  ? "bg-rose-600 text-white border-rose-500 shadow-lg shadow-rose-600/30"
-                  : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white"
-              }`}
-            >
-              <Flame className="w-3.5 h-3.5" />
-              <span>Tracer War</span>
-            </button>
-
-            <button
-              onClick={() => setLayerMode("radio")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border ${
-                layerMode === "radio"
-                  ? "bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-600/30"
-                  : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white"
-              }`}
-            >
-              <Radio className="w-3.5 h-3.5" />
-              <span>Sky Dial Radio</span>
-            </button>
-
-            <button
-              onClick={() => setLayerMode("tv")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap border ${
-                layerMode === "tv"
-                  ? "bg-purple-600 text-white border-purple-500 shadow-lg shadow-purple-600/30"
-                  : "bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-white"
-              }`}
-            >
-              <Tv className="w-3.5 h-3.5" />
-              <span>Sky Dial TV</span>
-            </button>
-          </div>
-
-          {/* Dynamic Metrics Ticker */}
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            {layerMode === "fbi" && (
-              <>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Active Bounties</span>
-                  <span className="font-bold text-amber-400">
-                    {new Intl.NumberFormat("en-US", {
-                      style: "currency",
-                      currency: "USD",
-                      maximumFractionDigits: 0,
-                    }).format(totalBountyValue)}
-                  </span>
-                </div>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Top 10 Wanted</span>
-                  <span className="font-bold text-red-400">{top10Count || 10} Priority</span>
-                </div>
-                <button
-                  onClick={() => setShowFbiDatasetModal(true)}
-                  className="bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 px-2.5 py-1.5 rounded-xl text-left transition-all"
-                  title="Click to view breakdown of all 1,254 FBI cases"
-                >
-                  <span className="text-[10px] text-cyan-400 uppercase flex items-center gap-1">
-                    Federal Registry <Info className="w-3 h-3" />
-                  </span>
-                  <span className="font-bold text-white">1,254 Cases</span>
-                </button>
-              </>
-            )}
-
-            {layerMode === "distress" && (
-              <>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Live CAD Calls</span>
-                  <span className="font-bold text-cyan-400">
-                    {distressCalls.length > 0 ? distressCalls.length.toLocaleString() : "23,398"} Calls
-                  </span>
-                </div>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Monitored Feeds</span>
-                  <span className="font-bold text-emerald-400">120 CAD Feeds</span>
-                </div>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl hidden sm:block">
-                  <span className="text-[10px] text-neutral-500 uppercase block">State Coverage</span>
-                  <span className="font-bold text-amber-400">38 US States</span>
-                </div>
-              </>
-            )}
-
-            {layerMode === "tracer" && (
-              <>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Combat Clusters</span>
-                  <span className="font-bold text-rose-500">400 Hotspots</span>
-                </div>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Fatalities Recorded</span>
-                  <span className="font-bold text-red-400">
-                    {totalConflictsFatalities > 0 ? totalConflictsFatalities.toLocaleString() : "135,565+"}
-                  </span>
-                </div>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl hidden sm:block">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Data Source</span>
-                  <span className="font-bold text-cyan-400">UCDP Satellite</span>
-                </div>
-              </>
-            )}
-
-            {layerMode === "radio" && (
-              <>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">World Stations</span>
-                  <span className="font-bold text-emerald-400">7,959 Tuned</span>
-                </div>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Sovereign Nations</span>
-                  <span className="font-bold text-white">190+ Countries</span>
-                </div>
-              </>
-            )}
-
-            {layerMode === "tv" && (
-              <>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Live Broadcasts</span>
-                  <span className="font-bold text-purple-400">2,105 Feeds</span>
-                </div>
-                <div className="bg-neutral-900 border border-neutral-800 px-2.5 py-1.5 rounded-xl">
-                  <span className="text-[10px] text-neutral-500 uppercase block">Feed Types</span>
-                  <span className="font-bold text-cyan-400">IPTV & Cams</span>
-                </div>
-              </>
-            )}
+          <div className="hidden sm:block">
+            <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-widest block">
+              OMNI-GLOBE PLATFORM
+            </span>
+            <span className="text-xs font-black text-white tracking-wider uppercase">
+              {layerMode === "fbi" && "FBI Most Wanted Manhunts"}
+              {layerMode === "distress" && "Distress 911 CAD Dispatch"}
+              {layerMode === "tracer" && "Tracer Conflict War Map"}
+              {layerMode === "radio" && "Sky Dial World Radio Tuner"}
+              {layerMode === "tv" && "Sky Dial TV & CCTV Feeds"}
+            </span>
           </div>
         </div>
 
-        {/* Layer Sub-Navigation Tabs */}
-        <div className="max-w-7xl mx-auto px-4 flex items-center gap-2 overflow-x-auto py-2 border-t border-neutral-900">
-          {layerMode === "fbi" && (
-            <>
-              <button
-                onClick={() => setFbiTab("globe")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  fbiTab === "globe"
-                    ? "bg-red-600 text-white shadow-lg shadow-red-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Globe className="w-4 h-4" />
-                <span>3D Tactical Globe</span>
-              </button>
-              <button
-                onClick={() => setFbiTab("board")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  fbiTab === "board"
-                    ? "bg-red-600 text-white shadow-lg shadow-red-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Grid className="w-4 h-4" />
-                <span>Bounty Board (1,254 Cases)</span>
-              </button>
-              <button
-                onClick={() => setFbiTab("game")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  fbiTab === "game"
-                    ? "bg-red-600 text-white shadow-lg shadow-red-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Gamepad2 className="w-4 h-4" />
-                <span>Higher or Lower</span>
-              </button>
-              <button
-                onClick={() => setFbiTab("radar")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  fbiTab === "radar"
-                    ? "bg-red-600 text-white shadow-lg shadow-red-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Radio className="w-4 h-4" />
-                <span>Field Radar (56 Offices)</span>
-              </button>
-            </>
-          )}
+        {/* Center: Master Mode Switcher Pills */}
+        <div className="flex items-center gap-1 bg-neutral-900/90 border border-neutral-800 p-1 rounded-xl">
+          <button
+            onClick={() => setLayerMode("fbi")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+              layerMode === "fbi"
+                ? "bg-red-600 text-white shadow-md shadow-red-600/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Shield className="w-3.5 h-3.5" />
+            <span>FBI Wanted</span>
+          </button>
 
-          {layerMode === "distress" && (
-            <>
-              <button
-                onClick={() => setDistressTab("globe")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  distressTab === "globe"
-                    ? "bg-cyan-600 text-white shadow-lg shadow-cyan-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Globe className="w-4 h-4" />
-                <span>3D Emergency Radar</span>
-              </button>
-              <button
-                onClick={() => setDistressTab("feed")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  distressTab === "feed"
-                    ? "bg-cyan-600 text-white shadow-lg shadow-cyan-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <ShieldAlert className="w-4 h-4" />
-                <span>Live CAD Incident Feed</span>
-              </button>
-            </>
-          )}
+          <button
+            onClick={() => setLayerMode("distress")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+              layerMode === "distress"
+                ? "bg-cyan-600 text-white shadow-md shadow-cyan-600/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <ShieldAlert className="w-3.5 h-3.5" />
+            <span>Distress 911</span>
+          </button>
 
-          {layerMode === "tracer" && (
-            <>
-              <button
-                onClick={() => setTracerTab("globe")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  tracerTab === "globe"
-                    ? "bg-rose-600 text-white shadow-lg shadow-rose-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Globe className="w-4 h-4" />
-                <span>3D War Theater Globe</span>
-              </button>
-              <button
-                onClick={() => setTracerTab("conflicts")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  tracerTab === "conflicts"
-                    ? "bg-rose-600 text-white shadow-lg shadow-rose-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Flame className="w-4 h-4" />
-                <span>UCDP Conflict Intelligence</span>
-              </button>
-            </>
-          )}
+          <button
+            onClick={() => setLayerMode("tracer")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+              layerMode === "tracer"
+                ? "bg-rose-600 text-white shadow-md shadow-rose-600/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Flame className="w-3.5 h-3.5" />
+            <span>Tracer War</span>
+          </button>
 
-          {layerMode === "radio" && (
-            <>
-              <button
-                onClick={() => setRadioTab("globe")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  radioTab === "globe"
-                    ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Globe className="w-4 h-4" />
-                <span>3D Radio Frequency Globe</span>
-              </button>
-              <button
-                onClick={() => setRadioTab("directory")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  radioTab === "directory"
-                    ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Radio className="w-4 h-4" />
-                <span>World Station Directory</span>
-              </button>
-            </>
-          )}
+          <button
+            onClick={() => setLayerMode("radio")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+              layerMode === "radio"
+                ? "bg-emerald-600 text-white shadow-md shadow-emerald-600/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Radio className="w-3.5 h-3.5" />
+            <span>Sky Dial Radio</span>
+          </button>
 
-          {layerMode === "tv" && (
-            <>
-              <button
-                onClick={() => setTvTab("globe")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  tvTab === "globe"
-                    ? "bg-purple-600 text-white shadow-lg shadow-purple-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Globe className="w-4 h-4" />
-                <span>3D Broadcast Satellite Globe</span>
-              </button>
-              <button
-                onClick={() => setTvTab("guide")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                  tvTab === "guide"
-                    ? "bg-purple-600 text-white shadow-lg shadow-purple-600/30"
-                    : "text-neutral-400 hover:text-white hover:bg-neutral-900"
-                }`}
-              >
-                <Tv className="w-4 h-4" />
-                <span>Broadcast Guide & Webcams</span>
-              </button>
-            </>
-          )}
+          <button
+            onClick={() => setLayerMode("tv")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${
+              layerMode === "tv"
+                ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            <Tv className="w-3.5 h-3.5" />
+            <span>Sky Dial TV</span>
+          </button>
+        </div>
+
+        {/* Right Status Badge */}
+        <div className="hidden lg:flex items-center gap-2 text-xs">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-[11px] text-neutral-400 font-bold uppercase">
+            Live Natural Earth Matrix
+          </span>
         </div>
       </header>
 
-      {/* Main Viewport Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6">
-        {/* Layer Mode 1: FBI Most Wanted */}
-        {layerMode === "fbi" && (
-          <>
-            {fbiTab === "globe" && (
-              <div className="space-y-4">
-                <div className="text-center max-w-2xl mx-auto space-y-1">
-                  <h2 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wider">
-                    Global Crime & Escape Coordinates
-                  </h2>
-                  <p className="text-xs text-neutral-400">
-                    Pinpointing federal crime origin field offices against suspected international escape havens (Athens, Honduras, Mexico, India).
-                  </p>
-                </div>
-                <TacticalGlobe
-                  activeMode="fbi"
-                  fugitives={fugitives}
-                  distressCalls={distressCalls}
-                  tracerHotspots={tracerHotspots}
-                  radioStations={radioStations}
-                  tvChannels={tvChannels}
-                  onSelectFugitive={setSelectedFugitive}
-                  selectedFugitive={selectedFugitive}
-                />
-              </div>
-            )}
+      {/* VIEWPORT AREA */}
+      <div className="relative flex-1 w-full h-[calc(100vh-56px)] overflow-hidden">
+        {/* IMMERSIVE 3D TACTICAL GLOBE (Always Mounted) */}
+        <TacticalGlobe
+          activeMode={layerMode}
+          fugitives={fugitives}
+          distressCalls={distressCalls}
+          tracerHotspots={tracerHotspots}
+          radioStations={radioStations}
+          tvChannels={tvChannels}
+          onSelectFugitive={setSelectedFugitive}
+          onSelectDistressCall={handleLocateCall}
+          onSelectTracerHotspot={setSelectedTracerHotspot}
+          onSelectRadioStation={handleLocateStation}
+          onSelectTvChannel={handleLocateChannel}
+          selectedFugitive={selectedFugitive}
+          selectedRadioStation={selectedRadioStation}
+          selectedTvChannel={selectedTvChannel}
+          autoRotate={autoRotate}
+          onToggleOrbit={() => setAutoRotate((r) => !r)}
+          focusPoint={focusPoint}
+        />
 
-            {fbiTab === "board" && (
-              <BountyBoard
-                fugitives={fugitives}
-                onSelectFugitive={handleLocateFugitive}
-              />
-            )}
-
-            {fbiTab === "game" && <BountyGame fugitives={fugitives} />}
-
-            {fbiTab === "radar" && (
-              <FieldRadar
-                fugitives={fugitives}
-                onSelectFugitive={handleLocateFugitive}
-              />
-            )}
-          </>
+        {/* 🔴 LAYER 1: FBI MOST WANTED HUD OVERLAY */}
+        {layerMode === "fbi" && fbiSubTab === "globe" && (
+          <FbiHUD
+            fugitives={fugitives}
+            activeFugitive={selectedFugitive}
+            onSelectFugitive={setSelectedFugitive}
+            onCloseFugitive={() => setSelectedFugitive(null)}
+            onOpenDossier={(f) => setDossierFugitive(f)}
+            activeSubTab={fbiSubTab}
+            onSubTabChange={setFbiSubTab}
+            autoRotate={autoRotate}
+            onToggleOrbit={() => setAutoRotate((r) => !r)}
+            totalBountyValue={totalBountyValue}
+            top10Count={top10Count}
+            totalDatabaseCases={1254}
+            onOpenInfoModal={() => setShowFbiDatasetModal(true)}
+          />
         )}
 
-        {/* Layer Mode 2: Distress 911 CAD */}
+        {/* FBI ALTERNATIVE VIEWS (Board / Game / Radar) */}
+        {layerMode === "fbi" && fbiSubTab !== "globe" && (
+          <div className="absolute inset-0 z-30 bg-neutral-950/95 overflow-y-auto p-4 sm:p-6 backdrop-blur-md">
+            <div className="max-w-7xl mx-auto space-y-4">
+              <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
+                <button
+                  onClick={() => setFbiSubTab("globe")}
+                  className="px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white text-xs font-bold transition-all"
+                >
+                  ← Return to 3D Globe
+                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setFbiSubTab("board")}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      fbiSubTab === "board" ? "bg-red-600 text-white" : "bg-neutral-900 text-neutral-400"
+                    }`}
+                  >
+                    Bounty Board (1,254)
+                  </button>
+                  <button
+                    onClick={() => setFbiSubTab("game")}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      fbiSubTab === "game" ? "bg-red-600 text-white" : "bg-neutral-900 text-neutral-400"
+                    }`}
+                  >
+                    Higher or Lower
+                  </button>
+                  <button
+                    onClick={() => setFbiSubTab("radar")}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                      fbiSubTab === "radar" ? "bg-red-600 text-white" : "bg-neutral-900 text-neutral-400"
+                    }`}
+                  >
+                    Field Radar (56)
+                  </button>
+                </div>
+              </div>
+
+              {fbiSubTab === "board" && (
+                <BountyBoard
+                  fugitives={fugitives}
+                  onSelectFugitive={handleLocateFugitive}
+                />
+              )}
+              {fbiSubTab === "game" && <BountyGame fugitives={fugitives} />}
+              {fbiSubTab === "radar" && (
+                <FieldRadar
+                  fugitives={fugitives}
+                  onSelectFugitive={handleLocateFugitive}
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 🚨 LAYER 2: AUTHENTIC DISTRESS HUD OVERLAY */}
         {layerMode === "distress" && (
-          <>
-            {distressTab === "globe" && (
-              <div className="space-y-4">
-                <div className="text-center max-w-2xl mx-auto space-y-1">
-                  <h2 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wider">
-                    Live 911 CAD Emergency Feeds
-                  </h2>
-                  <p className="text-xs text-neutral-400">
-                    Active Computer-Aided Dispatch emergency calls from 120 police, fire, and rescue feeds across 38 states with WebAudio telemetry synthesizer.
-                  </p>
-                </div>
-                <TacticalGlobe
-                  activeMode="distress"
-                  fugitives={fugitives}
-                  distressCalls={distressCalls}
-                  tracerHotspots={tracerHotspots}
-                  radioStations={radioStations}
-                  tvChannels={tvChannels}
-                  onSelectDistressCall={setSelectedDistressCall}
-                />
-              </div>
-            )}
-
-            {distressTab === "feed" && (
-              <DistressCADFeed
-                calls={distressCalls}
-                onSelectCall={handleLocateCall}
-              />
-            )}
-          </>
+          <DistressHUD
+            calls={distressCalls}
+            activeCall={selectedDistressCall}
+            onSelectCall={handleLocateCall}
+            onCloseCall={() => setSelectedDistressCall(null)}
+            soundOn={soundOn}
+            onToggleSound={handleToggleSound}
+            autoRotate={autoRotate}
+            onToggleOrbit={() => setAutoRotate((r) => !r)}
+            onFocusRegion={handleFocusRegion}
+            sevFilter={sevFilter}
+            onSevFilterChange={setSevFilter}
+            kindFilter={kindFilter}
+            onKindFilterChange={setKindFilter}
+          />
         )}
 
-        {/* Layer Mode 3: Tracer War Conflicts */}
+        {/* ⚔️ LAYER 3: AUTHENTIC TRACER HUD OVERLAY */}
         {layerMode === "tracer" && (
-          <>
-            {tracerTab === "globe" && (
-              <div className="space-y-4">
-                <div className="text-center max-w-2xl mx-auto space-y-1">
-                  <h2 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wider">
-                    UCDP Armed Conflicts & Hotspots
-                  </h2>
-                  <p className="text-xs text-neutral-400">
-                    400 active conflict clusters, state warfare, and cartel clash zones mapped with satellite casualty tracking.
-                  </p>
-                </div>
-                <TacticalGlobe
-                  activeMode="tracer"
-                  fugitives={fugitives}
-                  distressCalls={distressCalls}
-                  tracerHotspots={tracerHotspots}
-                  radioStations={radioStations}
-                  tvChannels={tvChannels}
-                />
-              </div>
-            )}
-
-            {tracerTab === "conflicts" && (
-              <TracerConflicts
-                conflicts={tracerConflicts}
-                hotspots={tracerHotspots}
-              />
-            )}
-          </>
+          <TracerHUD
+            conflicts={tracerConflicts}
+            hotspots={tracerHotspots}
+            activeHotspot={selectedTracerHotspot}
+            onSelectHotspot={setSelectedTracerHotspot}
+            onCloseHotspot={() => setSelectedTracerHotspot(null)}
+            autoRotate={autoRotate}
+            onToggleOrbit={() => setAutoRotate((r) => !r)}
+            band={tracerBand}
+            onBandChange={setTracerBand}
+          />
         )}
 
-        {/* Layer Mode 4: Sky Dial Radio */}
+        {/* 📻 LAYER 4: AUTHENTIC SKY DIAL RADIO HUD OVERLAY */}
         {layerMode === "radio" && (
-          <>
-            {radioTab === "globe" && (
-              <div className="space-y-4">
-                <div className="text-center max-w-2xl mx-auto space-y-1">
-                  <h2 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wider">
-                    Sky Dial World Radio Tuner
-                  </h2>
-                  <p className="text-xs text-neutral-400">
-                    7,959 live streaming world radio transmitters across 190+ countries. Click any station or transmitter dot to listen live.
-                  </p>
-                </div>
-                <TacticalGlobe
-                  activeMode="radio"
-                  fugitives={fugitives}
-                  distressCalls={distressCalls}
-                  tracerHotspots={tracerHotspots}
-                  radioStations={radioStations}
-                  tvChannels={tvChannels}
-                  onSelectRadioStation={setSelectedRadioStation}
-                  selectedRadioStation={selectedRadioStation}
-                />
-              </div>
-            )}
-
-            {radioTab === "directory" && (
-              <RadioDirectory
-                stations={radioStations}
-                onSelectStation={handleLocateStation}
-                activeStation={selectedRadioStation}
-              />
-            )}
-          </>
+          <SkyDialHUD
+            mode="radio"
+            stations={radioStations}
+            channels={tvChannels}
+            activeStation={selectedRadioStation}
+            activeChannel={null}
+            onSelectStation={handleLocateStation}
+            onSelectChannel={() => {}}
+            onCloseActive={() => setSelectedRadioStation(null)}
+            autoRotate={autoRotate}
+            onToggleOrbit={() => setAutoRotate((r) => !r)}
+            onFocusCoordinates={(lat, lng) => setFocusPoint({ lat, lng })}
+          />
         )}
 
-        {/* Layer Mode 5: Sky Dial TV */}
+        {/* 📺 LAYER 5: AUTHENTIC SKY DIAL TV & CCTV HUD OVERLAY */}
         {layerMode === "tv" && (
-          <>
-            {tvTab === "globe" && (
-              <div className="space-y-4">
-                <div className="text-center max-w-2xl mx-auto space-y-1">
-                  <h2 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wider">
-                    Sky Dial TV Broadcasts & Webcams
-                  </h2>
-                  <p className="text-xs text-neutral-400">
-                    2,105 live television feeds and public city webcams plotted at their origin coordinates across Earth.
-                  </p>
-                </div>
-                <TacticalGlobe
-                  activeMode="tv"
-                  fugitives={fugitives}
-                  distressCalls={distressCalls}
-                  tracerHotspots={tracerHotspots}
-                  radioStations={radioStations}
-                  tvChannels={tvChannels}
-                  onSelectTvChannel={setSelectedTvChannel}
-                  selectedTvChannel={selectedTvChannel}
-                />
-              </div>
-            )}
-
-            {tvTab === "guide" && (
-              <TvGuide
-                channels={tvChannels}
-                onSelectChannel={handleLocateChannel}
-                activeChannel={selectedTvChannel}
-              />
-            )}
-          </>
+          <SkyDialHUD
+            mode="tv"
+            stations={radioStations}
+            channels={tvChannels}
+            activeStation={null}
+            activeChannel={selectedTvChannel}
+            onSelectStation={() => {}}
+            onSelectChannel={handleLocateChannel}
+            onCloseActive={() => setSelectedTvChannel(null)}
+            autoRotate={autoRotate}
+            onToggleOrbit={() => setAutoRotate((r) => !r)}
+            onFocusCoordinates={(lat, lng) => setFocusPoint({ lat, lng })}
+          />
         )}
-      </main>
+      </div>
 
       {/* Classified Modal Dossier */}
       <FugitiveDossier
-        fugitive={selectedFugitive}
-        onClose={() => setSelectedFugitive(null)}
+        fugitive={dossierFugitive}
+        onClose={() => setDossierFugitive(null)}
         onLocateOnGlobe={handleLocateFugitive}
       />
 
@@ -845,27 +585,6 @@ export default function Home() {
           </div>
         </div>
       )}
-
-      {/* Footer */}
-      <footer className="border-t border-neutral-900 bg-neutral-950 py-6 text-center text-xs text-neutral-500 font-mono">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-3">
-          <p>
-            Omni-Globe combines feeds from the{" "}
-            <a
-              href="https://www.fbi.gov/wanted/api"
-              target="_blank"
-              rel="noreferrer"
-              className="text-red-400 hover:underline"
-            >
-              FBI Wanted API
-            </a>
-            , Distress CAD, UCDP Conflict Data, and Sky Dial Radio/TV.
-          </p>
-          <p className="text-[11px] text-neutral-600">
-            Unified Multi-Layer Next.js Architecture • Natural Earth Vector Coastlines
-          </p>
-        </div>
-      </footer>
     </div>
   );
 }
