@@ -89,3 +89,9 @@ export function playScannerBlip(sev = 0): void {
   }
   tone({ freq: 760, start: t, dur: 0.06, type: "sine", peak: 0.16 });
 }
+
+// Aliases matching distress-globe
+export const blip = playScannerBlip;
+export const enable = enableAudio;
+export const disable = disableAudio;
+export const isEnabled = isAudioEnabled;

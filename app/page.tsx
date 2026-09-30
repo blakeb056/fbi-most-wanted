@@ -102,7 +102,7 @@ export default function Home() {
   // 2. Pre-fetch / lazy-load Distress CAD calls
   useEffect(() => {
     if (layerMode === "distress" || distressCalls.length === 0) {
-      fetch("/api/distress")
+      fetch("/api/calls")
         .then((r) => r.json())
         .then((data) => {
           if (data.calls && Array.isArray(data.calls)) {
@@ -357,6 +357,7 @@ export default function Home() {
           onSelectRadioStation={handleLocateStation}
           onSelectTvChannel={handleLocateChannel}
           selectedFugitive={selectedFugitive}
+          selectedDistressCall={selectedDistressCall}
           selectedRadioStation={selectedRadioStation}
           selectedTvChannel={selectedTvChannel}
           autoRotate={autoRotate}
@@ -442,19 +443,12 @@ export default function Home() {
         {/* 🚨 LAYER 2: AUTHENTIC DISTRESS HUD OVERLAY */}
         {layerMode === "distress" && (
           <DistressHUD
-            calls={distressCalls}
             activeCall={selectedDistressCall}
             onSelectCall={handleLocateCall}
             onCloseCall={() => setSelectedDistressCall(null)}
-            soundOn={soundOn}
-            onToggleSound={handleToggleSound}
-            autoRotate={autoRotate}
-            onToggleOrbit={() => setAutoRotate((r) => !r)}
             onFocusRegion={handleFocusRegion}
-            sevFilter={sevFilter}
-            onSevFilterChange={setSevFilter}
-            kindFilter={kindFilter}
-            onKindFilterChange={setKindFilter}
+            onFocusCoordinates={(lat, lon) => setFocusPoint({ lat, lng: lon })}
+            onUpdateDistressCalls={(calls) => setDistressCalls(calls)}
           />
         )}
 

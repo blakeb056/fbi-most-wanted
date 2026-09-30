@@ -60,8 +60,47 @@ export interface DistressCall {
   desc: string;
   city: string;
   state: string;
-  kind: "police" | "fire" | "ems" | string;
-  sev: number; // 0: routine, 1: priority, 2: urgent, 3: violent felony
+  kind: "police" | "fire" | "crime" | "traffic" | string;
+  sev: number; // 0: routine, 1: urgent, 2: serious, 3: violent felony
+  agency?: string;
+  place?: string;
+  src?: string;
+  approx?: boolean;
+  live?: boolean;
+  hot?: boolean;
+  born?: number;
+  key?: string;
+}
+
+export interface DistressSource {
+  id: string;
+  ok: boolean;
+  count: number;
+  ms: number;
+  city: string;
+  state: string;
+  agency: string;
+  kind: string;
+  live: boolean;
+  ageMin?: number | null;
+  error?: string;
+  note?: string;
+  stale?: boolean;
+  cached?: boolean;
+}
+
+export interface DistressApiResponse {
+  generatedAt: string;
+  buildMs: number;
+  total: number;
+  states: string[];
+  feedsOk: number;
+  feedsLive: number;
+  feedsTotal: number;
+  fallbackActive: boolean;
+  fallbackCount: number;
+  sources: DistressSource[];
+  calls: DistressCall[];
 }
 
 export interface TracerHotspot {

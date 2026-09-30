@@ -25,6 +25,7 @@ interface TacticalGlobeProps {
   onSelectRadioStation?: (station: RadioStation) => void;
   onSelectTvChannel?: (channel: TvChannel) => void;
   selectedFugitive?: Fugitive | null;
+  selectedDistressCall?: DistressCall | null;
   selectedRadioStation?: RadioStation | null;
   selectedTvChannel?: TvChannel | null;
   autoRotate?: boolean;
@@ -57,6 +58,7 @@ export default function TacticalGlobe({
   onSelectRadioStation,
   onSelectTvChannel,
   selectedFugitive,
+  selectedDistressCall,
   selectedRadioStation,
   selectedTvChannel,
   autoRotate = false, // Default to FALSE so globe NEVER drifts or fights the user
@@ -129,6 +131,12 @@ export default function TacticalGlobe({
       if (loc) focusOnCoordinates(loc.lat, loc.lng);
     }
   }, [selectedFugitive, focusOnCoordinates]);
+
+  useEffect(() => {
+    if (selectedDistressCall) {
+      focusOnCoordinates(selectedDistressCall.lat, selectedDistressCall.lon);
+    }
+  }, [selectedDistressCall, focusOnCoordinates]);
 
   useEffect(() => {
     if (selectedRadioStation) {
@@ -535,19 +543,20 @@ export default function TacticalGlobe({
     if (activeMode === "fbi") interactiveMeshesRef.current = group.children;
   }, [fugitives, activeMode]);
 
-  // Populate Distress Layer with authentic SEV_COLOR palette
+  // Populate Distress Layer with authentic SEV_COLOR palette and alarm beacons
   useEffect(() => {
     const group = distressGroupRef.current;
     if (!group) return;
     group.clear();
 
-    const activeCallsSlice = distressCalls.slice(0, 500);
+    const activeCallsSlice = distressCalls.slice(0, 2000);
     activeCallsSlice.forEach((call) => {
-      const pos = latLngToVector3(call.lat, call.lon, GLOBE_RADIUS + 0.6);
-      const isFelony = call.sev >= 3;
+      if (!Number.isFinite(call.lat) || !Number.isFinite(call.lon)) return;
+      const isFelony = (call.sev || 0) >= 3;
+      const pos = latLngToVector3(call.lat, call.lon, GLOBE_RADIUS + (isFelony ? 0.9 : 0.5));
       const hexColor = isFelony ? 0xff1240 : call.sev === 2 ? 0xff5a2d : call.sev === 1 ? 0xffb020 : 0x35d0ff;
 
-      const dotGeom = new THREE.SphereGeometry(isFelony ? 1.6 : 1.1, 8, 8);
+      const dotGeom = new THREE.SphereGeometry(isFelony ? 1.6 : 0.95, 8, 8);
       const dotMat = new THREE.MeshBasicMaterial({ color: hexColor });
       const dotMesh = new THREE.Mesh(dotGeom, dotMat);
       dotMesh.position.copy(pos);
@@ -556,6 +565,21 @@ export default function TacticalGlobe({
         call,
       };
       group.add(dotMesh);
+
+      // Dedicated alarm halo ring for tier-3 violent felonies
+      if (isFelony) {
+        const ringGeom = new THREE.RingGeometry(1.9, 2.7, 16);
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: 0xff1240,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.75,
+        });
+        const ringMesh = new THREE.Mesh(ringGeom, ringMat);
+        ringMesh.position.copy(pos);
+        ringMesh.lookAt(new THREE.Vector3(0, 0, 0));
+        group.add(ringMesh);
+      }
     });
 
     if (activeMode === "distress") interactiveMeshesRef.current = group.children;
