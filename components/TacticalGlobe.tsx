@@ -115,106 +115,39 @@ export default function TacticalGlobe({
 
     const GLOBE_RADIUS = 75;
 
-    // 4. Procedural Tactical Canvas Texture (Continents & Grid)
-    const textureCanvas = document.createElement("canvas");
-    textureCanvas.width = 2048;
-    textureCanvas.height = 1024;
-    const ctx = textureCanvas.getContext("2d")!;
-
-    // Deep tactical ocean
-    ctx.fillStyle = "#060d1a";
-    ctx.fillRect(0, 0, textureCanvas.width, textureCanvas.height);
-
-    // Tactical Lat/Lng Grid
-    ctx.strokeStyle = "rgba(30, 58, 95, 0.4)";
-    ctx.lineWidth = 1;
-    for (let lat = -60; lat <= 60; lat += 30) {
-      const y = ((90 - lat) / 180) * textureCanvas.height;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(textureCanvas.width, y);
-      ctx.stroke();
-    }
-    for (let lng = -180; lng <= 180; lng += 30) {
-      const x = ((lng + 180) / 360) * textureCanvas.width;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, textureCanvas.height);
-      ctx.stroke();
-    }
-
-    // Helper to draw continent polygons
-    const drawLandmass = (pts: [number, number][]) => {
-      ctx.beginPath();
-      pts.forEach(([lng, lat], i) => {
-        const x = ((lng + 180) / 360) * textureCanvas.width;
-        const y = ((90 - lat) / 180) * textureCanvas.height;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.closePath();
-      ctx.fillStyle = "#0c1b30";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(56, 189, 248, 0.45)";
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-    };
-
-    // Continental shapes (Equirectangular)
-    // North America
-    drawLandmass([
-      [-168, 65], [-160, 71], [-130, 70], [-95, 75], [-80, 73],
-      [-60, 62], [-55, 52], [-65, 45], [-75, 35], [-80, 25],
-      [-82, 9], [-77, 8], [-85, 14], [-97, 19], [-105, 23],
-      [-117, 32], [-124, 48], [-135, 58], [-165, 60]
-    ]);
-    // South America
-    drawLandmass([
-      [-77, 8], [-60, 9], [-50, 0], [-35, -5], [-37, -12],
-      [-40, -22], [-50, -32], [-65, -55], [-75, -50], [-72, -35],
-      [-80, -5], [-77, 8]
-    ]);
-    // Europe & Scandinavia
-    drawLandmass([
-      [-10, 36], [0, 44], [-5, 48], [5, 54], [10, 58],
-      [25, 71], [32, 70], [40, 65], [45, 55], [30, 45],
-      [25, 38], [15, 38], [0, 36], [-10, 36]
-    ]);
-    // UK
-    drawLandmass([[-5, 50], [2, 52], [-1, 58], [-5, 58]]);
-    // Africa
-    drawLandmass([
-      [-17, 32], [10, 37], [32, 31], [43, 12], [51, 11],
-      [40, -10], [32, -30], [20, -35], [17, -33], [12, -15],
-      [9, 4], [-15, 12], [-17, 32]
-    ]);
-    // Asia & Russia
-    drawLandmass([
-      [30, 45], [45, 55], [60, 60], [80, 73], [130, 73],
-      [170, 65], [140, 50], [130, 40], [122, 30], [108, 15],
-      [100, 5], [90, 22], [80, 10], [75, 20], [60, 25],
-      [50, 30], [35, 32]
-    ]);
-    // India Subcontinent
-    drawLandmass([[70, 24], [78, 8], [80, 8], [88, 22]]);
-    // Australia
-    drawLandmass([
-      [115, -22], [130, -12], [142, -11], [153, -28],
-      [150, -37], [138, -38], [115, -34], [113, -25]
-    ]);
-
-    const canvasTexture = new THREE.CanvasTexture(textureCanvas);
-    canvasTexture.needsUpdate = true;
-
-    // Base Sphere with procedural map
+    // 4. Base Tactical Sphere
     const sphereGeometry = new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64);
     const sphereMaterial = new THREE.MeshBasicMaterial({
-      map: canvasTexture,
+      color: 0x050c18,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.96,
     });
     const baseSphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
     globeGroup.add(baseSphere);
+
+    // 5. Authentic World Country Vector Boundaries (Natural Earth 195+ Countries)
+    fetch("/countries.json")
+      .then((res) => res.json())
+      .then((lineRings: [number, number][][]) => {
+        const linePoints: THREE.Vector3[] = [];
+        lineRings.forEach((ring) => {
+          for (let i = 0; i < ring.length - 1; i++) {
+            const p1 = latLngToVector3(ring[i][1], ring[i][0], GLOBE_RADIUS + 0.35);
+            const p2 = latLngToVector3(ring[i + 1][1], ring[i + 1][0], GLOBE_RADIUS + 0.35);
+            linePoints.push(p1, p2);
+          }
+        });
+        const countryGeom = new THREE.BufferGeometry().setFromPoints(linePoints);
+        const countryMat = new THREE.LineBasicMaterial({
+          color: 0x38bdf8, // glowing tactical cyan
+          transparent: true,
+          opacity: 0.65,
+          linewidth: 1,
+        });
+        const countryLines = new THREE.LineSegments(countryGeom, countryMat);
+        globeGroup.add(countryLines);
+      })
+      .catch((err) => console.error("Failed to load country boundaries:", err));
 
     // Tactical Wireframe Outer Shell
     const wireframeMaterial = new THREE.MeshBasicMaterial({

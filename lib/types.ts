@@ -42,8 +42,8 @@ export interface Fugitive {
   url: string;
   publication: string;
   modified: string;
-  crime_location?: { name: string; lat: number; lng: number } | null;
-  escape_location?: { name: string; lat: number; lng: number } | null;
+  crime_location?: { name: string; lat: number; lng: number; state?: string; country?: string } | null;
+  escape_location?: { name: string; lat: number; lng: number; state?: string; country?: string } | null;
 }
 
 export interface WantedApiResponse {

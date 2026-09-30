@@ -35,8 +35,21 @@ export function normalizeFugitive(raw: any): Fugitive {
     crimeLoc = FUGITIVE_CUSTOM_LOCATIONS[title].crime;
     escapeLoc = FUGITIVE_CUSTOM_LOCATIONS[title].escape;
   } else {
-    // 2. Derive from field office
-    if (raw.field_offices && raw.field_offices.length > 0) {
+    // 2. Check if raw FBI record has explicit coordinates
+    if (raw.coordinates && raw.coordinates.length > 0) {
+      const coord = raw.coordinates[0];
+      if (typeof coord.lat === "number" && typeof coord.lng === "number") {
+        crimeLoc = {
+          name: coord.formatted || coord.city || "Investigative Jurisdiction",
+          lat: coord.lat,
+          lng: coord.lng,
+          state: coord.state,
+        };
+      }
+    }
+
+    // 3. Derive from field office if not yet found
+    if (!crimeLoc && raw.field_offices && raw.field_offices.length > 0) {
       const officeKey = raw.field_offices[0].toLowerCase().replace(/[^a-z]/g, "");
       if (FBI_FIELD_OFFICES[officeKey]) {
         crimeLoc = FBI_FIELD_OFFICES[officeKey];

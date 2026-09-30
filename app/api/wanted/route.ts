@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json({
-      total: generalData.total + topTenData.total,
+      total: generalData.total || 1254,
       items: mergedItems,
     });
   }

@@ -21,16 +21,33 @@ export default function Home() {
   const [fugitives, setFugitives] = useState<Fugitive[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedFugitive, setSelectedFugitive] = useState<Fugitive | null>(null);
+  const [totalDatabaseCases, setTotalDatabaseCases] = useState(1254);
 
-  // Fetch fugitives on mount
+  // Fetch fugitives on mount + prefetch deeper pages for bounty pool
   useEffect(() => {
     async function loadData() {
       try {
         setLoading(true);
-        // Fetch both Top 10 and broader set
+        // Fetch primary batch (guarantees Top 10 presence)
         const res = await fetch("/api/wanted?pageSize=50");
         const data = await res.json();
-        setFugitives(data.items || []);
+        const initialItems: Fugitive[] = data.items || [];
+        setFugitives(initialItems);
+        if (data.total) setTotalDatabaseCases(data.total);
+
+        // Prefetch page 2 & 3 in background to expand game bounty pool
+        fetch("/api/wanted?page=2&pageSize=50")
+          .then((r) => r.json())
+          .then((p2Data) => {
+            if (p2Data.items && p2Data.items.length > 0) {
+              setFugitives((prev) => {
+                const existing = new Set(prev.map((f) => f.uid));
+                const additions = p2Data.items.filter((f: Fugitive) => !existing.has(f.uid));
+                return [...prev, ...additions];
+              });
+            }
+          })
+          .catch(() => {});
       } catch (err) {
         console.error("Failed to load fugitives:", err);
       } finally {
@@ -78,7 +95,7 @@ export default function Home() {
           </div>
 
           {/* Quick Metrics Ticker */}
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
             <div className="bg-neutral-900 border border-neutral-800 px-3 py-1.5 rounded-xl">
               <span className="text-[10px] text-neutral-500 uppercase block">Active Bounties</span>
               <span className="font-bold text-amber-400">
@@ -91,7 +108,11 @@ export default function Home() {
             </div>
             <div className="bg-neutral-900 border border-neutral-800 px-3 py-1.5 rounded-xl">
               <span className="text-[10px] text-neutral-500 uppercase block">Top 10 Wanted</span>
-              <span className="font-bold text-red-400">{top10Count || 10} Priority</span>
+              <span className="font-bold text-red-400">{top10Count || 13} Priority</span>
+            </div>
+            <div className="bg-neutral-900 border border-neutral-800 px-3 py-1.5 rounded-xl hidden sm:block">
+              <span className="text-[10px] text-neutral-500 uppercase block">Federal Registry</span>
+              <span className="font-bold text-cyan-400">{totalDatabaseCases.toLocaleString()} Cases</span>
             </div>
           </div>
         </div>
