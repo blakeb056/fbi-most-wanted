@@ -51,3 +51,59 @@ export interface WantedApiResponse {
   page: number;
   items: Fugitive[];
 }
+
+export interface DistressCall {
+  id: string;
+  lat: number;
+  lon: number;
+  ts: string;
+  desc: string;
+  city: string;
+  state: string;
+  kind: "police" | "fire" | "ems" | string;
+  sev: number; // 0: routine, 1: priority, 2: urgent, 3: violent felony
+}
+
+export interface TracerHotspot {
+  la: number;
+  lo: number;
+  n: number; // casualties
+  e: number; // events
+}
+
+export interface TracerConflict {
+  id: string;
+  name: string;
+  sideA: string;
+  sideB: string;
+  type: string;
+  deaths: number;
+  civilians: number;
+  events: number;
+  countries: string[];
+  first: string;
+  last: string;
+}
+
+export interface RadioStation {
+  lat: number;
+  lon: number;
+  name: string;
+  cc: string;
+  url: string;
+  id: string;
+  clicks: number;
+}
+
+export interface TvChannel {
+  lat: number;
+  lon: number;
+  name: string;
+  cc: string;
+  url: string;
+  id: string;
+  cat: string;
+}
+
+export type GlobeLayerMode = "fbi" | "distress" | "tracer" | "radio" | "tv";
+
