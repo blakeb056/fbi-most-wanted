@@ -95,3 +95,60 @@ export const blip = playScannerBlip;
 export const enable = enableAudio;
 export const disable = disableAudio;
 export const isEnabled = isAudioEnabled;
+
+/**
+ * Mechanical rotary knob click for CRT TV / Radio tuner
+ */
+export function playTunerClick(): void {
+  if (!isAudioEnabled() || !ctx) return;
+  const t = ctx.currentTime;
+  tone({ freq: 1400, start: t, dur: 0.02, type: "square", peak: 0.2, sweepTo: 300 });
+}
+
+/**
+ * Analog white noise static burst for channel switching / radio scanning
+ */
+export function playStaticBurst(durationMs = 240): void {
+  if (!isAudioEnabled() || !ctx || !master) return;
+  try {
+    const durSec = Math.max(0.08, durationMs / 1000);
+    const bufferSize = Math.floor(ctx.sampleRate * durSec);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.value = 1600;
+    filter.Q.value = 1.2;
+
+    const gain = ctx.createGain();
+    const t = ctx.currentTime;
+    gain.gain.setValueAtTime(0.001, t);
+    gain.gain.exponentialRampToValueAtTime(0.1, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + durSec);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(master);
+
+    noise.start(t);
+    noise.stop(t + durSec + 0.02);
+  } catch {
+    /* ignore fallback */
+  }
+}
+
+/**
+ * Lock tone when tuner successfully acquires a signal
+ */
+export function playStationLockTone(): void {
+  if (!isAudioEnabled() || !ctx) return;
+  const t = ctx.currentTime;
+  tone({ freq: 660, start: t, dur: 0.06, type: "sine", peak: 0.15 });
+  tone({ freq: 990, start: t + 0.06, dur: 0.1, type: "sine", peak: 0.18 });
+}

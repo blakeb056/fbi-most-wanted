@@ -1,7 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { RadioStation, TvChannel } from "@/lib/types";
+import CrtTvTuner from "./CrtTvTuner";
+import RadioTunerDeck from "./RadioTunerDeck";
 import {
   Radio,
   Tv,
@@ -15,6 +17,8 @@ import {
   MapPin,
   X,
   Compass,
+  Sparkles,
+  SlidersHorizontal,
 } from "lucide-react";
 
 interface SkyDialHUDProps {
@@ -45,11 +49,35 @@ export default function SkyDialHUD({
   onFocusCoordinates,
 }: SkyDialHUDProps) {
   const [searchTerm, setSearchTerm] = useState("");
+  // Tuner HUD toggle states (can be toggled on/off)
+  const [showCrtTuner, setShowCrtTuner] = useState(true);
+  const [showRadioTuner, setShowRadioTuner] = useState(true);
+
   const isRadio = mode === "radio";
+
+  // Filtered search results
+  const searchResults = useMemo(() => {
+    if (!searchTerm.trim()) return [];
+    const term = searchTerm.toLowerCase();
+    if (isRadio) {
+      return stations
+        .filter((s) => s.name.toLowerCase().includes(term) || s.cc.toLowerCase().includes(term))
+        .slice(0, 8);
+    } else {
+      return channels
+        .filter(
+          (c) =>
+            c.name.toLowerCase().includes(term) ||
+            c.cc.toLowerCase().includes(term) ||
+            c.cat.toLowerCase().includes(term)
+        )
+        .slice(0, 8);
+    }
+  }, [searchTerm, isRadio, stations, channels]);
 
   return (
     <div className="absolute inset-0 pointer-events-none z-30 font-mono select-none">
-      {/* 1. TOP-LEFT: BRAND & STREAM COUNTER */}
+      {/* 1. TOP-LEFT: BRAND, TELEMETRY & SEARCH */}
       <div className="pointer-events-auto absolute top-4 left-4 max-w-sm w-full bg-neutral-900/92 border border-neutral-700/80 rounded-2xl p-4 shadow-2xl backdrop-blur-md text-white">
         <div className="flex items-center justify-between border-b border-neutral-800 pb-2.5">
           <div className="flex items-center gap-2">
@@ -65,7 +93,9 @@ export default function SkyDialHUD({
             </h2>
           </div>
           <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">
-            {isRadio ? "7,959 TRANSMITTERS" : "2,105 BROADCASTS"}
+            {isRadio
+              ? `${stations.length.toLocaleString() || "7,959"} STATIONS`
+              : `${channels.length.toLocaleString() || "2,105"} BROADCASTS`}
           </span>
         </div>
 
@@ -85,11 +115,81 @@ export default function SkyDialHUD({
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full bg-neutral-950/80 border border-neutral-800 pl-8 pr-3 py-1.5 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
           />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm("")}
+              className="absolute right-2.5 top-2 text-neutral-400 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
+
+        {/* Search Results Dropdown */}
+        {searchResults.length > 0 && (
+          <div className="mt-2 bg-neutral-950/95 border border-neutral-800 rounded-xl p-1 max-h-48 overflow-y-auto space-y-1">
+            {searchResults.map((item: any) => (
+              <button
+                key={item.id}
+                onClick={() => {
+                  if (isRadio) {
+                    onSelectStation(item);
+                  } else {
+                    onSelectChannel(item);
+                  }
+                  onFocusCoordinates(item.lat, item.lon);
+                  setSearchTerm("");
+                }}
+                className="w-full text-left p-1.5 rounded-lg hover:bg-neutral-800/80 text-xs flex items-center justify-between gap-2"
+              >
+                <div className="truncate">
+                  <span className="font-bold text-white">{item.name}</span>
+                  <span className="text-[10px] text-neutral-400 ml-1.5">({item.cc})</span>
+                </div>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-300 shrink-0">
+                  {isRadio ? `${item.clicks || 0} listens` : item.cat}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* 2. TOP-RIGHT: ORBIT & CONTROLS */}
+      {/* 2. TOP-RIGHT: TUNER HUD TOGGLE & CAMERA ORBIT CONTROLS */}
       <div className="pointer-events-auto absolute top-4 right-4 flex items-center gap-2">
+        {/* CRT TV Tuner HUD Toggle (in TV mode) */}
+        {!isRadio && (
+          <button
+            onClick={() => setShowCrtTuner((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold border text-xs shadow-xl backdrop-blur-md transition-all ${
+              showCrtTuner
+                ? "bg-purple-600 border-purple-400 text-white shadow-purple-900/40"
+                : "bg-neutral-900/90 border-neutral-700 text-neutral-400 hover:text-white"
+            }`}
+            title="Turn CRT TV Tuner HUD On or Off"
+          >
+            <Tv className="w-3.5 h-3.5" />
+            <span>{showCrtTuner ? "CRT Tuner: ON" : "CRT Tuner: OFF"}</span>
+          </button>
+        )}
+
+        {/* Radio Tuner HUD Toggle (in Radio mode) */}
+        {isRadio && (
+          <button
+            onClick={() => setShowRadioTuner((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold border text-xs shadow-xl backdrop-blur-md transition-all ${
+              showRadioTuner
+                ? "bg-emerald-600 border-emerald-400 text-white shadow-emerald-900/40"
+                : "bg-neutral-900/90 border-neutral-700 text-neutral-400 hover:text-white"
+            }`}
+            title="Turn Radio Tuner HUD On or Off"
+          >
+            <Radio className="w-3.5 h-3.5" />
+            <span>{showRadioTuner ? "Radio Tuner: ON" : "Radio Tuner: OFF"}</span>
+          </button>
+        )}
+
+        {/* Camera Orbit Toggle */}
         <button
           onClick={onToggleOrbit}
           className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold border text-xs shadow-xl backdrop-blur-md transition-all ${
@@ -106,86 +206,26 @@ export default function SkyDialHUD({
         </button>
       </div>
 
-      {/* 3. BOTTOM HUD: ACTIVE RADIO STREAMING DECK */}
-      {isRadio && activeStation && (
-        <div className="pointer-events-auto absolute bottom-4 left-4 right-4 max-w-xl mx-auto bg-neutral-900/95 border border-emerald-500/60 rounded-2xl p-4 shadow-2xl backdrop-blur-md text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shrink-0">
-              <Radio className="w-6 h-6 animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  NOW TUNED IN ({activeStation.cc || "GLOBAL"})
-                </span>
-                <span className="text-[10px] text-neutral-400">
-                  {activeStation.clicks?.toLocaleString() || 0} listens
-                </span>
-              </div>
-              <h4 className="text-sm font-bold text-white line-clamp-1 mt-0.5">
-                {activeStation.name}
-              </h4>
-              <div className="flex items-center gap-1 text-[11px] text-neutral-400 mt-0.5">
-                <MapPin className="w-3 h-3 text-neutral-500" />
-                <span>Lat: {activeStation.lat.toFixed(2)}°, Lon: {activeStation.lon.toFixed(2)}°</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <audio src={activeStation.url} controls autoPlay className="h-8 max-w-xs" />
-            <button
-              onClick={onCloseActive}
-              className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+      {/* 3. CRT TV TUNER HUD (When in TV Mode and Tuner is ON) */}
+      {!isRadio && showCrtTuner && (
+        <CrtTvTuner
+          channels={channels}
+          activeChannel={activeChannel}
+          onSelectChannel={onSelectChannel}
+          onClose={() => setShowCrtTuner(false)}
+          onFocusCoordinates={onFocusCoordinates}
+        />
       )}
 
-      {/* 4. BOTTOM HUD: ACTIVE TV / CCTV MONITOR */}
-      {!isRadio && activeChannel && (
-        <div className="pointer-events-auto absolute bottom-4 left-4 right-4 max-w-xl mx-auto bg-neutral-900/95 border border-purple-500/60 rounded-2xl p-4 shadow-2xl backdrop-blur-md text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400 shrink-0">
-              <Tv className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                  LIVE BROADCAST ({activeChannel.cat.toUpperCase()})
-                </span>
-                <span className="text-[10px] text-neutral-400">{activeChannel.cc}</span>
-              </div>
-              <h4 className="text-sm font-bold text-white line-clamp-1 mt-0.5">
-                {activeChannel.name}
-              </h4>
-              <div className="flex items-center gap-1 text-[11px] text-neutral-400 mt-0.5">
-                <MapPin className="w-3 h-3 text-neutral-500" />
-                <span>Lat: {activeChannel.lat.toFixed(2)}°, Lon: {activeChannel.lon.toFixed(2)}°</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <a
-              href={activeChannel.url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-lg transition-all"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>Watch Stream</span>
-            </a>
-            <button
-              onClick={onCloseActive}
-              className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+      {/* 4. VINTAGE HI-FI RADIO TUNER DECK (When in Radio Mode and Tuner is ON) */}
+      {isRadio && showRadioTuner && (
+        <RadioTunerDeck
+          stations={stations}
+          activeStation={activeStation}
+          onSelectStation={onSelectStation}
+          onClose={() => setShowRadioTuner(false)}
+          onFocusCoordinates={onFocusCoordinates}
+        />
       )}
     </div>
   );
